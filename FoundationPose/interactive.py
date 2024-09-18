@@ -47,8 +47,8 @@ align = rs.align(align_to)
 i = 0
 
 mask = cv2.imread(mask_file_path, cv2.IMREAD_UNCHANGED)
-cam_K = np.array([[615.37701416, 0., 313.68743896],
-                   [0., 615.37701416, 259.01800537],
+cam_K = np.array([[608.94921875, 0., 326.4563293457031],
+                   [0., 607.6509399414062, 240.90924072265625],
                    [0., 0., 1.]])
 Estimating = True
 time.sleep(3)
@@ -83,6 +83,11 @@ try:
         else:
             pose = est.track_one(rgb=color, depth=depth, K=cam_K, iteration=args.track_refine_iter)
         center_pose = pose@np.linalg.inv(to_origin)
+
+        # Print the center_pose matrix
+        print("Pose Matrix:")
+        print(pose)
+
         vis = draw_posed_3d_box(cam_K, img=color, ob_in_cam=center_pose, bbox=bbox)
         vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=cam_K, thickness=3, transparency=0, is_input_rgb=True)
         cv2.imshow('1', vis[...,::-1])
