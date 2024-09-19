@@ -83,11 +83,6 @@ try:
         else:
             pose = est.track_one(rgb=color, depth=depth, K=cam_K, iteration=args.track_refine_iter)
         center_pose = pose@np.linalg.inv(to_origin)
-
-        # Print the center_pose matrix
-        print("Pose Matrix:")
-        print(pose)
-
         vis = draw_posed_3d_box(cam_K, img=color, ob_in_cam=center_pose, bbox=bbox)
         vis = draw_xyz_axis(color, ob_in_cam=center_pose, scale=0.1, K=cam_K, thickness=3, transparency=0, is_input_rgb=True)
         cv2.imshow('1', vis[...,::-1])
