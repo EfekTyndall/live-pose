@@ -749,6 +749,43 @@ def draw_posed_3d_box(K, img, ob_in_cam, bbox, line_color=(0,255,0), linewidth=2
   return img
 
 
+def project_and_draw_points(rgb_image, point_cloud, K, pose, point_color=(0, 255, 0), point_radius=2, alpha=0.5):
+    """
+    Project a 3D point cloud onto a 2D image and draw the points with transparency.
+
+    Args:
+        rgb_image (np.ndarray): The RGB image to draw points on.
+        point_cloud (np.ndarray): The 3D point cloud (N, 3).
+        K (np.ndarray): Camera intrinsic matrix (3, 3).
+        pose (np.ndarray): Object-to-camera transformation matrix (4, 4).
+        point_color (tuple): Color of the points to draw (B, G, R).
+        point_radius (int): Radius of each drawn point.
+        alpha (float): Transparency factor (0 = fully transparent, 1 = fully opaque).
+
+    Returns:
+        np.ndarray: Image with points drawn.
+    """
+    # Transform points using the pose
+    point_cloud_homo = np.hstack((point_cloud, np.ones((point_cloud.shape[0], 1))))  # Convert to homogeneous coordinates
+    transformed_points = (pose @ point_cloud_homo.T).T[:, :3]  # Apply transformation and remove homogeneous dim
+
+    # Project 3D points to 2D
+    points_2d_homo = (K @ transformed_points.T).T
+    points_2d = points_2d_homo[:, :2] / points_2d_homo[:, 2:]  # Normalize by depth
+
+    # Create a transparent overlay
+    overlay = rgb_image.copy()
+
+    # Draw points on the overlay
+    for point in np.int32(points_2d):
+        cv2.circle(overlay, tuple(point), point_radius, point_color, thickness=-1)
+
+    # Blend the overlay with the original image
+    blended_image = cv2.addWeighted(overlay, alpha, rgb_image, 1 - alpha, 0)
+
+    return blended_image
+
+
 def projection_matrix_from_intrinsics(K, height, width, znear, zfar, window_coords='y_down'):
   """Conversion of Hartley-Zisserman intrinsic matrix to OpenGL proj. matrix.
 
