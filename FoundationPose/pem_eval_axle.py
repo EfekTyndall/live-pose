@@ -18,7 +18,6 @@ def compute_pose_metrics(
     Returns a dict containing the metrics.
     """
     # 1) Load GT transform (4x4) from text file
-    # Suppose we have a 4x4 format in tf_ground_truth.txt:
     gt_transform = np.loadtxt(ground_truth_txt)  # shape (4,4)
 
     # Ensure shape correctness
@@ -40,9 +39,9 @@ def compute_pose_metrics(
     # Compute translation error (mm) if your data is in mm
     trans_err = np.linalg.norm(t_est - t_gt)
 
-    # Compute ADD
-    # transform model_points by GT and by EST, compute average distance
-    # model_points shape (N,3)
+    # Compute Average Distance of Model Points (ADD)
+    # Transform model_points by the estimated and ground-truth poses and 
+    # measure the average distance between the resulting point sets
     model_est = (R_est @ model_points.T).T + t_est
     model_gt  = (R_gt @ model_points.T).T + t_gt
     add = np.mean(np.linalg.norm(model_est - model_gt, axis=1))
@@ -54,22 +53,29 @@ def compute_pose_metrics(
     }
     return metrics_dict
 
+
 def overlay_points_on_image(
     image_bgr, points_3d, pose_4x4, K,
     color=(0,255,0), radius=1
 ):
     """
-    Projects points_3d by pose_4x4 onto image_bgr using camera intrinsics K.
+    Projects a set of 3D points onto a 2D image plane using the provided 4x4 transformation and 
+    a 3x3 camera intrinsic matrix. Then draws circles on the image at the projected positions.
     Draw small circles in 'color' with 'radius'.
     Returns the overlaid image.
     """
     n = points_3d.shape[0]
     ones = np.ones((n,1), dtype=np.float32)
     pts_hom = np.hstack([points_3d, ones])  # (N,4)
+
+    # Apply the 4x4 transformation to the points
     pts_cam = (pose_4x4 @ pts_hom.T).T[:, :3]  # shape (N,3)
 
+    # Unpack the camera intrinsics
     fx, fy = K[0,0], K[1,1]
     cx, cy = K[0,2], K[1,2]
+
+    # Project the points into 2D
     zs = pts_cam[:,2]
     xs = pts_cam[:,0]*fx/zs + cx
     ys = pts_cam[:,1]*fy/zs + cy
@@ -79,6 +85,7 @@ def overlay_points_on_image(
         if z > 0:  # only draw if in front of camera
             cv2.circle(out_img, (int(x), int(y)), radius, color, -1)
     return out_img
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -95,18 +102,18 @@ def main():
     parser.add_argument('--runs_per_scene', type=int, default=5, help="Number of runs per scene")
     args = parser.parse_args()
 
-    # Constants
+    # Constants for file paths and scaling
     mesh_path = "/home/martyn/martyn/data/sdit01888D53e5s6_Meshed_Decimated_Scaled.ply"
     point_cloud_path = "/home/martyn/martyn/data/point_cloud_medium.ply"
 
-    # Intrinsic matrix
+    # Camera intrinsic matrix (3x3)
     cam_K = np.array([
         [605.5885009765625, 0., 326.1221008300781],
         [0., 603.9918212890625, 253.0368194580078],
         [0., 0., 1.]
     ])
 
-    # Depth scale factor if needed
+    # Depth scale factor
     depth_scale = 0.001
 
     # Load the CAD mesh for FoundationPose
@@ -115,7 +122,7 @@ def main():
     refiner = PoseRefinePredictor()
     glctx = dr.RasterizeCudaContext()
 
-    # Create the FoundationPose object once (same mesh used for all scenes)
+    # Initialize the FoundationPose object with the loaded mesh
     est = FoundationPose(
         model_pts=mesh.vertices,
         model_normals=mesh.vertex_normals,
@@ -125,32 +132,30 @@ def main():
         glctx=glctx
     )
 
-    # Load the separate point cloud for overlay
+    # Load a separate point cloud for overlaying 3D points onto images
     cad_cloud = trimesh.load(point_cloud_path)
     model_points = np.array(cad_cloud.vertices)  # shape (N, 3), presumably mm
 
-    # Prepare a list of dictionaries for final CSV across all scenes
+    # This list will store scene-level summary metrics across all scenes
     all_scenes_summary = []
 
     for scene_idx in range(1, args.num_scenes + 1):
         scene_name = f"scene_{scene_idx:02d}"
         scene_dir = os.path.join(args.scenes_root, scene_name)
 
-        # Prepare a list to hold run-level metrics for this scene
+        # Container for run-level metrics within this scene
         run_metrics = []
 
-        # We'll store the path to output for this scene
+        # Output directory for current scene
         scene_output_dir = os.path.join(args.output_root, scene_name)
         os.makedirs(scene_output_dir, exist_ok=True)
 
-        # Identify the necessary files in the scene directory
-        # e.g. "rgb.png", "depth.png", "mask.png", "tf_ground_truth.txt"
+        # Identify file paths needed for each scene
         rgb_path    = os.path.join(scene_dir, "rgb.png")
         depth_path  = os.path.join(scene_dir, "depth.png")
         mask_path   = os.path.join(scene_dir, "mask.png")
-        gt_path     = os.path.join(scene_dir, "tf_ground_truth.txt")
 
-        # Pre-load the static data that won't change across runs
+       # Load the scene's static data
         rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
         if rgb is None:
             print(f"[ERROR] Missing RGB for {scene_name}. Skipping scene.")
@@ -166,6 +171,7 @@ def main():
         if mask is None:
             print(f"[ERROR] Missing mask for {scene_name}. Skipping scene.")
             continue
+         # If mask has multiple channels, use the first non-empty channel
         if len(mask.shape) == 3:
             # pick channel
             for c in range(3):
@@ -174,21 +180,16 @@ def main():
                     break
         mask = mask.astype(bool).astype(np.uint8)
 
-        # Check ground truth file
-        #if not os.path.isfile(gt_path):
-        #    print(f"[ERROR] Missing ground truth for {scene_name}. Skipping scene.")
-        #    continue
-
-        # Now do multiple runs
+        # Perform multiple runs for each scene
         for run_idx in range(1, args.runs_per_scene + 1):
             print(f"\n--- {scene_name}, Run {run_idx} ---")
             run_dir = os.path.join(scene_output_dir, f"run_{run_idx:02d}")
             os.makedirs(run_dir, exist_ok=True)
 
-            # Start timing
+            # Record the time at the start of the inference
             start_time = time.time()
 
-            # Pose estimation
+            # Estimate the pose using FoundationPose
             pose = est.register(
                 K=cam_K,
                 rgb=cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB),
@@ -197,32 +198,22 @@ def main():
                 iteration=args.est_refine_iter
             )
 
+            # Compute the inference runtime
             inference_runtime = time.time() - start_time
             print(f"Inference time: {inference_runtime:.4f}s")
 
-            # Convert (3,4) -> (4,4) if needed
+            # Convert (3,4) to (4,4) if necessary
             if pose.shape == (3,4):
                 tmp = np.eye(4, dtype=np.float32)
                 tmp[:3,:4] = pose
                 pose = tmp
 
             print("Estimated Pose:\n", pose)
-
-            # Compute pose metrics
-            #metrics_dict = compute_pose_metrics(
-            #    pose_4x4=pose,
-            #    ground_truth_txt=gt_path,
-            #    model_points=model_points,
-            #    scene_name=scene_name
-            #)
-
-            # Add runtime
-            #metrics_dict["Inference Runtime (s)"] = inference_runtime
-
+            
+            # For illustration, we'll store only runtime in metrics_dict
             metrics_dict = {"Inference Runtime (s)":  inference_runtime}
 
-            # Save overlay for visualization
-            # We'll overlay onto the BGR 'rgb' image
+            # Create an overlay of the projected 3D model points on the BGR image
             overlayed = overlay_points_on_image(
                 rgb,  # BGR
                 model_points,
@@ -236,24 +227,22 @@ def main():
             print(f"Overlay saved to {overlay_path}")
 
             # Save run-level metrics to a CSV
-            # We'll create a small DataFrame with 2 columns: "Metric" & "Value"
-            metric_items = list(metrics_dict.items())  # [("Rotation Error (deg)", X), ...]
+            metric_items = list(metrics_dict.items())  # e.g. [("Inference Runtime (s)", 0.123)]
             df_run = pd.DataFrame(metric_items, columns=["Metric","Value"])
             eval_csv = os.path.join(run_dir, "evaluation_metrics.csv")
             df_run.to_csv(eval_csv, index=False)
             print(f"Metrics saved to {eval_csv}")
 
-            # Also keep them in memory to later compute scene-level stats
+            # Collect this run's metrics for later averaging
             run_metrics.append(metrics_dict)
 
-        # After finishing all runs for this scene, compute average and std
+        # Once all runs for this scene are done, compute mean/std for each metric
         df_runs = pd.DataFrame(run_metrics)  # each row is a run
         scene_avg = df_runs.mean()  # mean for each metric
         scene_std = df_runs.std()   # std for each metric
 
-        # Save scene-level metrics to scene_metrics.csv
-        # We'll create a new DataFrame that has "Metric", "Mean", "Std"
-        metric_names = df_runs.columns  # e.g. "Rotation Error (deg)", "ADD Metric (mm)", ...
+        # Save the scene-level metrics (mean/std) to a CSV
+        metric_names = df_runs.columns
         rows = []
         for mn in metric_names:
             avg_val = scene_avg[mn]
@@ -264,15 +253,14 @@ def main():
         df_scene.to_csv(scene_metrics_csv, index=False)
         print(f"Scene-level metrics for {scene_name} saved to {scene_metrics_csv}")
 
-        # We'll store the mean for each metric in a single dictionary (for the all_scenes CSV)
-        # Key them as "MetricName Mean", or keep them separate
+        # Store the scene-level mean and std in a dictionary for the final all-scenes summary
         scene_summary_dict = {"Scene": scene_name}
         for mn in metric_names:
             scene_summary_dict[f"{mn} Mean"] = scene_avg[mn]
             scene_summary_dict[f"{mn} SD"]  = scene_std[mn]
         all_scenes_summary.append(scene_summary_dict)
 
-    # After all scenes, save a combined CSV
+    # After processing all scenes, save a combined CSV with metrics for every scene
     df_all_scenes = pd.DataFrame(all_scenes_summary)
     all_csv = os.path.join(args.output_root, "all_scenes_average_metrics.csv")
     df_all_scenes.to_csv(all_csv, index=False)

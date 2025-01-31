@@ -18,7 +18,6 @@ def compute_pose_metrics(
     Returns a dict containing the metrics.
     """
     # 1) Load GT transform (4x4) from text file
-    # Suppose we have a 4x4 format in tf_ground_truth.txt:
     gt_transform = np.loadtxt(ground_truth_txt)  # shape (4,4)
 
     # Ensure shape correctness
@@ -40,9 +39,9 @@ def compute_pose_metrics(
     # Compute translation error (mm) if your data is in mm
     trans_err = np.linalg.norm(t_est - t_gt)
 
-    # Compute ADD
-    # transform model_points by GT and by EST, compute average distance
-    # model_points shape (N,3)
+    # Compute Average Distance of Model Points (ADD)
+    # Transform model_points by the estimated and ground-truth poses and 
+    # measure the average distance between the resulting point sets
     model_est = (R_est @ model_points.T).T + t_est
     model_gt  = (R_gt @ model_points.T).T + t_gt
     add = np.mean(np.linalg.norm(model_est - model_gt, axis=1))
@@ -66,8 +65,11 @@ def overlay_points_on_image(
     n = points_3d.shape[0]
     ones = np.ones((n,1), dtype=np.float32)
     pts_hom = np.hstack([points_3d, ones])  # (N,4)
+    
+    # Apply the 4x4 transformation to the points
     pts_cam = (pose_4x4 @ pts_hom.T).T[:, :3]  # shape (N,3)
 
+    # Unpack the camera intrinsics
     fx, fy = K[0,0], K[1,1]
     cx, cy = K[0,2], K[1,2]
     zs = pts_cam[:,2]
