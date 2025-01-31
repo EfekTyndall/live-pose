@@ -12,7 +12,7 @@ Intel RealSense Depth Camera compatible Python package for live 6 DOF pose estim
 
 1. **Clone the repository**:
     ```sh
-    git clone https://github.com/Kaivalya192/live-pose.git](https://github.com/EfekTyndall/live-pose.git
+    git clone https://github.com/EfekTyndall/live-pose.git
     cd live-pose
     ```
 
